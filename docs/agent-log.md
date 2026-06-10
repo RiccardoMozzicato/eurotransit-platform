@@ -33,7 +33,13 @@ Format per entry: **what the agent produced → why it was wrong → how we caug
   "verify on first build".
 - **Fix (pending Phase 2):** confirm at first `./gradlew build`; if incompatible, switch to a
   Boot-4-compatible Resilience4j release or wire CircuitBreaker/Retry programmatically via the
-  core modules. **Status: OPEN — do not claim resilience works until a test proves it.**
+  core modules.
+- **Resolution (2026-06-10): RESOLVED with evidence.** A green `contextLoads` was judged
+  insufficient (the auto-configuration could back off silently, leaving `@CircuitBreaker`
+  annotations inert), so we added a build-breaking assertion in `OrdersApplicationTests`
+  that the `CircuitBreakerRegistry` bean actually exists. It passes on Spring Boot 4.0.3 +
+  Resilience4j 2.3.0. Functional open/half-open behaviour is still to be exercised by a
+  dedicated test in Phase 2.
 
 ## 3. (Reserved) readiness vs liveness probe scoping
 
@@ -81,6 +87,27 @@ Format per entry: **what the agent produced → why it was wrong → how we caug
   over availability, as stated). `orders-db` → synchronous `preferred` (RPO=0 while healthy,
   degrades to async rather than blocking intake). Documented in `design.md` §4.12; requires
   CNPG ≥ 1.25.
+
+## 6. Lost state transitions: `@Modifying(clearAutomatically = true)` silently dropped unflushed entity changes
+
+- **Produced:** `InventoryService.release()` set `reservation.status = RELEASED` (relying on
+  Hibernate dirty checking) and then called the bulk-update `restock()`, whose
+  `@Modifying(clearAutomatically = true)` **cleared the persistence context before the status
+  change was ever flushed**. The transition was lost: the row stayed `RESERVED` in the DB, so
+  a second `release()` restocked the seats AGAIN — double restock, phantom availability,
+  oversell risk from the compensation path. Same latent bug in `confirm()` (expired branch)
+  and in the reconciler sweep (which would have re-expired the same holds every pass).
+- **Why subtle:** every individual piece looks correct; the bug is the *ordering interaction*
+  between dirty checking and bulk-update context clearing. The happy-path tests all passed —
+  only the idempotency test (`release restocks and is idempotent`, expected 10, got 14)
+  exposed it.
+- **How caught:** the test suite written alongside the code (2026-06-10), specifically the
+  idempotent-replay assertions. This is why idempotency tests are non-negotiable on the
+  money path.
+- **Fix:** `flushAutomatically = true` on the bulk updates, explicit `save()` of transitions
+  before any bulk update, and the sweep persists ALL transitions before the first restock
+  (the clear detaches the remaining entities mid-loop). All 12 inventory tests green,
+  including 8-thread last-seat and concurrent-duplicate races.
 
 ---
 
