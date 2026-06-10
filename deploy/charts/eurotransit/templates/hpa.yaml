@@ -1,0 +1,33 @@
+{{- /*
+HorizontalPodAutoscalers — only for services that opt in via `hpa.enabled` (catalog and
+orders: the public sync endpoints, where load is bursty). Inventory and Payments
+deliberately do NOT autoscale: their bottleneck is the database / downstream PSP, not
+service CPU (see values.yaml comments). The matching Deployment omits `replicas` when the
+HPA is enabled, so Argo CD and the HPA never fight over the count.
+Note for Phase 5: a canary split (orders-v1/v2) must re-point or duplicate the HPA.
+*/ -}}
+{{- range $name, $svc := .Values.services }}
+{{- if dig "hpa" "enabled" false $svc }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "eurotransit.labels" (dict "svc" $name "root" $) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $name }}
+  minReplicas: {{ $svc.hpa.minReplicas }}
+  maxReplicas: {{ $svc.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $svc.hpa.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}

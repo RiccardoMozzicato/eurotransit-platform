@@ -1,0 +1,47 @@
+{{- /*
+CloudNativePG Cluster CRs — one per data-owning service (database-per-service ownership).
+The CloudNativePG *operator* is installed once per cluster (platform component); these CRs
+declare the per-service databases. CNPG auto-creates a `<name>-app` Secret with
+host/port/dbname/username/password, consumed by the matching Deployment.
+
+Replication posture (PACELC, see docs/design.md §4.12 and values.yaml): databases that
+protect a correctness invariant opt into SYNCHRONOUS replication via the optional
+`synchronous` block (requires CNPG >= 1.25). CNPG's default is asynchronous, which allows
+RPO > 0 on failover — unacceptable for the inventory invariant ("never oversell").
+*/ -}}
+{{- range $name, $db := .Values.databases }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/part-of: eurotransit
+    app.kubernetes.io/name: {{ $name }}
+  annotations:
+    # Keep the data if the Helm release is removed (matches Lab04 safety convention).
+    helm.sh/resource-policy: keep
+spec:
+  instances: {{ $db.instances }}
+  imageName: ghcr.io/cloudnative-pg/postgresql:16
+  {{- if $db.synchronous }}
+  postgresql:
+    synchronous:
+      method: {{ $db.synchronous.method | default "any" }}
+      number: {{ $db.synchronous.number | default 1 }}
+      # required  → never fall back to async: block writes rather than risk RPO > 0 (CP)
+      # preferred → RPO=0 while standbys are healthy, degrade to async instead of blocking
+      dataDurability: {{ $db.synchronous.dataDurability | default "required" }}
+  {{- end }}
+  resources:
+    {{- toYaml $.Values.databaseResources | nindent 4 }}
+  storage:
+    size: 1Gi
+  bootstrap:
+    initdb:
+      database: {{ $db.database }}
+      owner: {{ $db.owner }}
+  # Enable Prometheus metrics so the DB appears in USE/Golden-Signals dashboards (Pillar D).
+  monitoring:
+    enablePodMonitor: true
+{{- end }}

@@ -1,0 +1,122 @@
+# EuroTransit — Design & consistency justification (g03)
+
+> Team-owned. The agent helped draft and explain; every decision below is one we can defend
+> at the oral. This is the canonical design doc; the shared team document mirrors it.
+
+## 1. Architecture
+
+```mermaid
+flowchart TB
+    Client([Client / Load-gen]) -->|HTTPS| Traefik[Traefik Ingress + TLS]
+    Traefik -->|sync GET| Catalog[Catalog svc]
+    Traefik -->|sync POST /api/orders| Orders[Orders svc]
+    Catalog --> CatDB[(Catalog DB)]
+    Orders --> OrdDB[(Orders DB + outbox)]
+    Orders -.->|outbox -> publish| Kafka{{Kafka / Strimzi}}
+    Orders -->|sync reserve idempotency-key| Inventory[Inventory svc]
+    Orders -->|sync authorize CB + idempotency| Payments[Payments svc]
+    Inventory --> InvDB[(Inventory DB atomic UPDATE)]
+    Payments --> PayDB[(Payments idempotency)]
+    Kafka -->|notification-requested / order-confirmed| Notifications[Notifications svc]
+    Notifications -.->|may fail without failing checkout| Sink([Email/SMS mock])
+    Inventory -.->|inventory-reserved| Kafka
+    Payments -.->|payment-authorized| Kafka
+    Orders -.->|order-placed / order-confirmed| Kafka
+```
+
+## 2. Money path (critical path)
+
+1. **Place order (sync, returns fast):** `POST /api/orders` → Orders persists the order
+   `PENDING` and writes `order-placed` to the **outbox** in the *same* DB transaction; returns
+   **202 Accepted** with `orderId`.
+2. **Publish (outbox → Kafka):** a coroutine relay publishes `order-placed` (at-least-once).
+3. **Reserve (async pipeline → sync call):** Orders consumes `order-placed` and calls
+   `Inventory.reserve` synchronously with an idempotency key. Atomic conditional UPDATE → on
+   success `RESERVED` + `inventory-reserved`; if sold out → compensate, order `REJECTED`.
+4. **Authorize (sync, protected):** Orders calls `Payments.authorize` behind circuit breaker +
+   timeout + retry(backoff+jitter) + bulkhead, with idempotency key. Success → `payment-authorized`;
+   breaker open/timeout → fallback (no unbounded hang).
+5. **Confirm:** order `CONFIRMED` → `order-confirmed` + `notification-requested`.
+6. **Notify (fully async, degrades):** Notifications consumes and sends; if down, checkout has
+   already succeeded.
+
+**Key subtlety:** the sync calls to Inventory/Payments happen *inside* the async pipeline —
+the HTTP request returns immediately, but later stages make synchronous calls where a decision
+is needed *now*.
+
+## 3. Sync vs async boundaries
+
+| Boundary | Mode | Why |
+|---|---|---|
+| client → gateway → Catalog | sync | read, tolerant of staleness |
+| client → gateway → Orders (place) | sync, returns 202 | user needs an immediate ack, not the full result |
+| Orders → Inventory (reserve) | sync | a reservation decision must be made now |
+| Orders → Payments (authorize) | sync | an authorization decision must be made now |
+| pipeline stages / all eventing | async (Kafka) | decouple, absorb bursts, survive downstream blips |
+| Notifications | async | must fail without failing checkout |
+
+## 4. Design decisions (summary — full rationale owned by team)
+
+1. **Database-per-service** (ownership, not just SPOF). Orders (2 instances) and Inventory
+   (3 instances) are the HA, correctness-critical stores. Payments gets a small **dedicated
+   single-instance** cluster *(team decision, 2026-06-09)*: it is on the money path but not
+   contended — "no double-charge" is enforced by the idempotency table regardless of
+   availability, and unavailability is contained by the Orders circuit breaker + fallback.
+   Kept as a dedicated Cluster CR (not a logical DB inside another cluster) because CNPG's
+   `initdb` bootstrap + auto-generated `-app` secret work per-cluster; a second database in a
+   shared cluster needs Database CRs + managed roles + hand-made secrets and couples failure
+   domains. Catalog single (staleness-tolerant). No service reads another's DB.
+2. **No dedicated auth service** (not required; would be scope creep). Optional gateway-level
+   token/forwardAuth only.
+3. **Orchestrated saga** (Orders coordinates; stages Kafka-driven; compensations on failure).
+4. **Transactional outbox** to avoid the dual-write problem → at-least-once → idempotent consumers.
+5. **Inventory consistency = CP / PACELC PC-EC**: prefer rejecting a reservation over overselling
+   in a partition; accept slightly higher latency for consistency without a partition.
+   Implemented as an atomic conditional `UPDATE ... WHERE available >= qty` (single-row,
+   transactional) + a reservation state machine (`RESERVED → CONFIRMED | RELEASED/EXPIRED`).
+6. **Idempotency** on the money path: key = `orderId`. Inventory dedup `(orderId, productId)`;
+   Payments dedup by key with persisted result. **Dedup-insert and decrement in one transaction.**
+7. **Resilience4j** for CB/retry/bulkhead/time-limiter (pending Boot-4 compatibility check —
+   see agent-log #2).
+8. **Tracing:** OpenTelemetry via Micrometer Tracing → OTLP → Tempo/Jaeger; propagate context
+   across Kafka headers.
+9. **Progressive delivery:** canary via Traefik `TraefikService` (weighted); blue/green via dual
+   deployments + routing switch. all-at-once/rolling discussed but not used on the critical path.
+10. **No heavyweight frontend:** a thin client / load generator (k6) is enough to demonstrate
+    behaviour under load.
+11. **Observability decisions** *(team, 2026-06-10)*: **Tempo** as tracing backend
+    (Grafana-native, exemplars) behind an **OpenTelemetry Collector** gateway; Micrometer →
+    Prometheus via ServiceMonitor/PodMonitor; dashboards = money-path overview, per-service
+    RED, infra USE, **Kafka consumer lag** (leading indicator of pipeline latency), CNPG.
+    SLIs: ack latency measured at the edge (Traefik) + Orders; end-to-end confirm latency and
+    success-rate as **business metrics emitted by Orders** (only it sees the state machine —
+    not derivable from HTTP metrics because the flow crosses Kafka). Only multi-window
+    burn-rate alerts page. Structured JSON logs with traceId; no mandatory log aggregation
+    (Loki = bonus). 100% sampling + exemplars at demo scale. Dashboards provisioned as code
+    from this repo. Details: `slo.md` + `platform/observability/README.md`.
+12. **Replication posture per database (PACELC made concrete)**: CNPG replicates
+    asynchronously by default → a failover can lose the last committed transactions (RPO > 0),
+    which would break "never oversell" exactly under chaos #5 (a committed reservation
+    vanishes, the counter rolls back, the seat is sold twice — the atomic UPDATE protects
+    against concurrency, not against losing committed state). Therefore: **inventory-db =
+    synchronous replication** (3 instances, ANY 1, `dataDurability: required`) → RPO=0 always;
+    one replica can die without blocking writes; if the primary is partitioned from both
+    standbys, writes **block** — consistency over availability, exactly our PC/EC statement.
+    **orders-db = synchronous `preferred`** (2 instances) → RPO=0 while healthy, degrades to
+    async instead of blocking order intake if the standby disappears (the invariants do not
+    live in orders-db). payments-db and catalog-db: single instance (see decision 1).
+    Requires CNPG ≥ 1.25.
+
+## 5. Open decisions (awaiting teammate feedback)
+- ~~D1 granularity~~ → **resolved 2026-06-09** (team feedback): dedicated HA clusters for
+  Orders & Inventory; small dedicated single-instance clusters for Payments and Catalog
+  (rationale in §4.1; replication posture in §4.12).
+- D2: include a minimal gateway auth check at all?
+- D9: stick to TraefikService, or also evaluate Argo Rollouts for canary automation?
+- D12 variant to confirm with the team: inventory-db at 3 instances (chosen: survives one
+  replica loss without blocking writes) vs 2 instances (1 pod less, but any standby outage
+  blocks writes — purer CP, harsher availability).
+
+## 6. Async cost analysis (Pillar A) — to complete
+Where async reduces cost/scaling pressure in EuroTransit (I/O-bound waits: waiting on Payments,
+on Kafka, on DB) vs where it does not help (CPU-bound work). Reference blocking-vs-suspending.

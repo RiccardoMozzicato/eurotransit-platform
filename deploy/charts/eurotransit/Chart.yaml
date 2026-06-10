@@ -1,0 +1,13 @@
+apiVersion: v2
+name: eurotransit
+description: EuroTransit Marketplace — application desired state (five services + their data + routing)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+# NOTE (deliberate deviation from Lab04): we do NOT vendor the CloudNativePG `cluster`
+# subchart here. The CloudNativePG *operator* is installed once per cluster as a platform
+# component; each service's database is declared directly as a `Cluster` CR in
+# templates/databases.yaml. Reason: we need several independent databases (one per
+# data-owning service), and per-service Cluster CRs are clearer and easier to reason about
+# than three aliased subchart instances. Strimzi/Kafka is likewise platform-level.

@@ -1,0 +1,12 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Helm
+*.tgz
+
+# Never commit plaintext secrets — only SealedSecrets belong in Git
+*-secret.yaml
+!*-sealedsecret.yaml

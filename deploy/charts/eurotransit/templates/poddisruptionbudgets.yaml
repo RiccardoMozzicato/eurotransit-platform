@@ -1,0 +1,21 @@
+{{- /*
+PodDisruptionBudgets for critical-path services: keep at least one replica available during
+voluntary disruptions (node drains, rolling node upgrades). Validated by the Node/AZ chaos
+experiment. Only emitted for services with replicaCount >= 2 to avoid blocking drains.
+*/ -}}
+{{- range $name, $svc := .Values.services }}
+{{- if and $svc.criticalPath (ge (int $svc.replicaCount) 2) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "eurotransit.labels" (dict "svc" $name "root" $) | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "eurotransit.selectorLabels" (dict "svc" $name) | nindent 6 }}
+{{- end }}
+{{- end }}

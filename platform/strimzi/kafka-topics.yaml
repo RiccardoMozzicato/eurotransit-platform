@@ -1,0 +1,81 @@
+# Event topics for the order pipeline (managed by the Strimzi Topic Operator).
+# Partitions enable parallel consumers; replication.factor=3 with min.insync.replicas=2
+# (set on the cluster) keeps events durable across a broker loss / network partition.
+# NOTE: plain manifests applied at platform bootstrap (NOT Helm-templated).
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: order-placed
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: eurotransit
+spec:
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: inventory-reserved
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: eurotransit
+spec:
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: inventory-released
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: eurotransit
+spec:
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: payment-authorized
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: eurotransit
+spec:
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: order-confirmed
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: eurotransit
+spec:
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: order-rejected
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: eurotransit
+spec:
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: notification-requested
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: eurotransit
+spec:
+  partitions: 3
+  replicas: 3

@@ -1,0 +1,30 @@
+# Platform components (installed once per cluster)
+
+These are **shared infrastructure**, not per-app workloads. They are bootstrapped once and
+then operate the EuroTransit application declared in `deploy/charts/eurotransit`.
+
+| Component | Namespace | Role | Source lab |
+|---|---|---|---|
+| **Traefik** | `traefik` | North-south ingress + TLS termination; canary via TraefikService | Lab03 |
+| **cert-manager** | `cert-manager` | ACME/Let's Encrypt certificates for the ingress | Lab03 |
+| **CloudNativePG operator** | `cnpg-system` | Reconciles per-service PostgreSQL `Cluster` CRs | Lab03 |
+| **Strimzi operator** | `kafka` | Reconciles the Kafka cluster + topics for the async pipeline | Capstone |
+| **Sealed Secrets** | `kube-system` | Encrypts secrets at rest in Git | Lab04 |
+| **Argo CD** | `argocd` | GitOps reconciliation of desired state | Lab04 |
+| **kube-prometheus-stack** | `observability` | Prometheus + Grafana + Alertmanager (RED/USE, SLO alerts) | Lab05 |
+| **Tempo / OTel collector** | `observability` | Distributed tracing backend for the money path | Lab05 |
+| **Chaos Mesh** | `chaos-mesh` | Controlled failure injection for the chaos experiments | Capstone |
+
+Subdirectories hold the per-component bootstrap config:
+
+```
+argocd/          Argo CD Application(s) + Argo CD's own ingress/values + sealed repo creds
+strimzi/         Kafka cluster CR + KafkaTopic CRs (order-placed, inventory-reserved, ...)
+cloudnativepg/   operator install notes (the per-service Cluster CRs live in the app chart)
+observability/   kube-prometheus-stack values, Tempo/OTel, ServiceMonitors, SLO rules
+chaos-mesh/      chaos experiment manifests (one per hypothesis)
+sealed-secrets/  controller notes + how to seal a secret
+```
+
+> Secrets live in Git **only** as SealedSecrets (Lab04). CI updates desired state; Argo CD
+> deploys. No `helm install` / `kubectl apply` for application releases.

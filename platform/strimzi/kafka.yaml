@@ -1,0 +1,62 @@
+# Strimzi-managed Kafka cluster for the EuroTransit async pipeline.
+# Skeleton — pin the Strimzi/Kafka version and tune replicas/storage in Phase 3.
+# KRaft mode (no ZooKeeper) via a KafkaNodePool.
+#
+# Sizing trade-off (deliberate): 3 dual-role nodes is the MINIMUM for real HA — the KRaft
+# controller quorum needs 3 voters to tolerate one loss, and RF=3/minISR=2 lets the money
+# path survive one broker down with zero event loss. A single-node Kafka would save ~2 pods
+# but makes the whole async pipeline a SPOF and weakens chaos experiment #4. We keep 3 nodes
+# and bound their footprint instead (512m heap + memory limits) — right-size, don't shrink HA.
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: eurotransit
+spec:
+  replicas: 3
+  roles:
+    - controller
+    - broker
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
+    limits:
+      memory: 1Gi
+  jvmOptions:
+    -Xms: 512m
+    -Xmx: 512m
+  storage:
+    type: persistent-claim
+    size: 5Gi
+    deleteClaim: false
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: eurotransit
+  namespace: kafka
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    version: 3.9.0
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+    config:
+      # Durability for the money path: replicate across brokers, require ISR acks.
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}

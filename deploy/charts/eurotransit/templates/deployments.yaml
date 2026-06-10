@@ -1,0 +1,130 @@
+{{- /*
+One Deployment + Service per entry in .Values.services.
+Probes follow the capstone rule: readiness reflects "can I serve now" (and, where a DB is
+owned, includes the db health group via the app config); liveness only checks the process
+itself and must NOT fail on transient downstream issues.
+*/ -}}
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "eurotransit.labels" (dict "svc" $name "root" $) | nindent 4 }}
+spec:
+  {{- /* When the HPA owns scaling we omit `replicas`: a pinned value would make Argo CD
+         and the HPA fight over the count on every reconcile. */}}
+  {{- if not (dig "hpa" "enabled" false $svc) }}
+  replicas: {{ $svc.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "eurotransit.selectorLabels" (dict "svc" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "eurotransit.labels" (dict "svc" $name "root" $) | nindent 8 }}
+    spec:
+      # SIGTERM drain window (Pillar A): readiness flips to refusing traffic, in-flight
+      # work finishes or is cancelled cooperatively within this budget.
+      terminationGracePeriodSeconds: 30
+      {{- if $svc.criticalPath }}
+      # Spread critical-path pods across nodes so a single node loss cannot take the
+      # service fully down (validated by the Node/AZ-disruption chaos experiment).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "eurotransit.selectorLabels" (dict "svc" $name) | nindent 14 }}
+      {{- end }}
+      containers:
+        - name: {{ $name }}
+          image: "{{ $svc.image.repository }}:{{ $svc.image.tag }}"
+          imagePullPolicy: {{ $svc.image.pullPolicy }}
+          # Small pre-stop pause: lets endpoint controllers remove the Pod from the
+          # Service before SIGTERM arrives, so no new request races into a dying Pod.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          ports:
+            - name: http
+              containerPort: {{ $svc.port }}
+              protocol: TCP
+          env:
+            - name: MANAGEMENT_OTLP_TRACING_ENDPOINT
+              value: "http://otel-collector.observability.svc:4318/v1/traces"
+            {{- if $svc.usesKafka }}
+            - name: KAFKA_BOOTSTRAP
+              value: {{ $.Values.global.kafkaBootstrap | quote }}
+            {{- end }}
+            {{- if $svc.db }}
+            - name: SPRING_PROFILES_ACTIVE
+              value: "postgres"
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $svc.db }}-app
+                  key: host
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $svc.db }}-app
+                  key: port
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $svc.db }}-app
+                  key: dbname
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $svc.db }}-app
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $svc.db }}-app
+                  key: password
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 15
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 24
+          resources:
+            {{- toYaml $.Values.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "eurotransit.labels" (dict "svc" $name "root" $) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "eurotransit.selectorLabels" (dict "svc" $name) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $svc.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

@@ -1,0 +1,40 @@
+{{- /*
+North-south entrypoint (Traefik + cert-manager TLS), following the Lab03/Lab04 pattern.
+Only Catalog and Orders are public (client → gateway → Catalog/Orders). Inventory, Payments
+and Notifications are internal: reached by Orders (sync) or via Kafka (async), never directly
+from the internet.
+
+Each service serves under its own path prefix (e.g. /api/orders, /api/catalog), so no
+strip-prefix middleware is needed. Phase 5 replaces the Orders route with a Traefik
+IngressRoute + TraefikService for weighted canary / blue-green delivery on the critical path.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: eurotransit
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - {{ .Values.global.domain }}
+      secretName: eurotransit-tls
+  rules:
+    - host: {{ .Values.global.domain }}
+      http:
+        paths:
+          - path: /api/catalog
+            pathType: Prefix
+            backend:
+              service:
+                name: catalog
+                port:
+                  number: {{ .Values.services.catalog.port }}
+          - path: /api/orders
+            pathType: Prefix
+            backend:
+              service:
+                name: orders
+                port:
+                  number: {{ .Values.services.orders.port }}
