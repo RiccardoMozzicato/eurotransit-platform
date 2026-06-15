@@ -61,6 +61,11 @@ spec:
             - name: KAFKA_BOOTSTRAP
               value: {{ $.Values.global.kafkaBootstrap | quote }}
             {{- end }}
+            {{- /* Service-specific env (e.g. Orders' sibling-service base URLs). */}}
+            {{- range $envName, $envValue := (dig "extraEnv" (dict) $svc) }}
+            - name: {{ $envName }}
+              value: {{ $envValue | quote }}
+            {{- end }}
             {{- if $svc.db }}
             - name: SPRING_PROFILES_ACTIVE
               value: "postgres"

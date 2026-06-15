@@ -42,6 +42,11 @@ services:
     db: orders-db
     criticalPath: true
     usesKafka: true
+    # The saga's synchronous decision calls (Orders -> Inventory/Payments) go to the
+    # in-cluster Service DNS names; locally the app falls back to localhost ports.
+    extraEnv:
+      INVENTORY_BASE_URL: http://inventory:8080
+      PAYMENTS_BASE_URL: http://payments:8080
     # Public sync entry of the money path: scale out under load instead of queueing
     # to collapse (works together with load shedding / 429, Pillar C).
     hpa:
