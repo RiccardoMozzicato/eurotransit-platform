@@ -1,31 +1,39 @@
-# EuroTransit — desired application state.
-# CI (application repo) bumps `services.<svc>.image.tag` after a successful image build;
-# Argo CD reconciles. Keep image tags as the only CI-mutated field.
+# EuroTransit -> desired application state (the chart's control panel: every template reads from here). CI (application repo) bumps "services.<svc>.image.tag" after a successful image build; Argo CD reconciles. Keep image tags as the only CI-mutated field!
 
+# Values shared by all services / templates
 global:
+  # container registry that hosts the service images (TODO: capisci quale cluster e registry usiamo per il progetto)
   registry: lab02g03registry.azurecr.io
+  # image path prefix: full image = <registry>/<imagePrefix>/<service>
   imagePrefix: eurotransit
+  # public host the Ingress serves (TLS cert is issued for this name)
   domain: g03.cpo2026.it
-  # Kafka bootstrap exposed by the Strimzi-managed cluster (platform namespace).
+  # Kafka bootstrap exposed by the Strimzi-managed cluster (platform namespace)
   kafkaBootstrap: eurotransit-kafka-bootstrap.kafka.svc:9092
 
-# Per-service desired state. `db` references a database name in `.databases` (or null).
-# `criticalPath` marks services on the money path (drives PDBs / spread / stricter SLOs).
-# `hpa.enabled: true` lets the HPA own scaling — the Deployment then omits `replicas`
-# so Argo CD and the HPA do not fight over the replica count (`replicaCount` stays as
-# the documented baseline and drives the PDB threshold).
+# Per-service desired state
+# "db" references a database name in ".databases" (or null)
+# "criticalPath" marks services on the money path (drives PDBs / spread / stricter SLOs)
+# "hpa.enabled: true" lets the HPA own scaling -> the Deployment then omits "replicas", so Argo CD and the HPA don't fight over the replica count ("replicaCount" stays as the documented baseline and drives the PDB threshold)
 services:
   catalog:
     image:
+      # full image reference; "tag" is the only field CI rewrites (to the commit SHA)
       repository: lab02g03registry.azurecr.io/eurotransit/catalog
       tag: latest
+      # IfNotPresent = don't re-pull if the tag is already cached on the node
       pullPolicy: IfNotPresent
+    # baseline replica count (also the HPA floor / PDB reference)
     replicaCount: 2
+    # container port the service listens on
     port: 8080
+    # the CloudNativePG database this service owns (see "databases" below)
     db: catalog-db
+    # NOT on the money path -> no PDB, no topology spread, looser SLOs
     criticalPath: false
+    # does not produce/consume Kafka events -> no KAFKA_BOOTSTRAP injected
     usesKafka: false
-    # Public read endpoint: bursty browse traffic is the natural HPA case.
+    # Public read endpoint: bursty browse traffic is the natural HPA case
     hpa:
       enabled: true
       minReplicas: 2
@@ -40,15 +48,14 @@ services:
     replicaCount: 2
     port: 8080
     db: orders-db
+    # on the money path -> gets a PDB + topology spread
     criticalPath: true
     usesKafka: true
-    # The saga's synchronous decision calls (Orders -> Inventory/Payments) go to the
-    # in-cluster Service DNS names; locally the app falls back to localhost ports.
+    # The saga's synchronous decision calls (Orders -> Inventory/Payments) go to the in-cluster Service DNS names; locally the app falls back to localhost ports
     extraEnv:
       INVENTORY_BASE_URL: http://inventory:8080
       PAYMENTS_BASE_URL: http://payments:8080
-    # Public sync entry of the money path: scale out under load instead of queueing
-    # to collapse (works together with load shedding / 429, Pillar C).
+    # Public sync entry of the money path: scale out under load instead of queueing to collapse (works together with load shedding / 429, Pillar C)
     hpa:
       enabled: true
       minReplicas: 2
@@ -65,8 +72,7 @@ services:
     db: inventory-db
     criticalPath: true
     usesKafka: true
-    # Deliberately NO HPA: the bottleneck is the single contended row in PostgreSQL,
-    # not service CPU — more replicas would not increase reservation throughput.
+    # Deliberately NO HPA: the bottleneck is the single contended row in PostgreSQL, not service CPU -> more replicas would not increase reservation throughput
     hpa:
       enabled: false
 
@@ -80,7 +86,7 @@ services:
     db: payments-db
     criticalPath: true
     usesKafka: true
-    # Deliberately NO HPA: work is I/O-bound on the (mock) PSP + idempotency store.
+    # Deliberately NO HPA: work is I/O-bound on the (mock) PSP + idempotency store
     hpa:
       enabled: false
 
@@ -89,71 +95,83 @@ services:
       repository: lab02g03registry.azurecr.io/eurotransit/notifications
       tag: latest
       pullPolicy: IfNotPresent
+    # single replica: this service is allowed to be fully down (graceful degradation)
     replicaCount: 1
     port: 8080
+    # owns no database (almost stateless: an in-memory ring buffer only)
     db: null
     criticalPath: false
     usesKafka: true
-    # Allowed to fail entirely (graceful degradation): one replica, no HPA, no PDB.
+    # Allowed to fail entirely (graceful degradation): one replica, no HPA, no PDB
     hpa:
       enabled: false
 
-# CloudNativePG Cluster CRs (operator is platform-level). One DB per data-owning service.
+
+
+# CloudNativePG Cluster CRs (operator is platform-level). One DB per data-owning service!
 #
-# Replication posture = our PACELC statement made real (see docs/design.md §4.12):
-# CNPG replicates ASYNCHRONOUSLY by default, which means a failover can lose the last
-# committed transactions (RPO > 0). For inventory that would break "never oversell"
-# exactly under chaos experiment #5 (a committed reservation vanishes, the seat counter
-# rolls back, the seat is sold twice). Hence:
-#   - inventory-db: SYNCHRONOUS replication, dataDurability=required → RPO=0 always.
-#     3 instances (ANY 1 of 2 standbys) so losing ONE replica does not block writes;
-#     if the primary is partitioned from both standbys, writes BLOCK = consistency
-#     over availability (PACELC PC/EC). Resource-saving variant: 2 instances (1 pod
-#     less) is also defensible but blocks writes whenever the single standby is down.
-#   - orders-db: SYNCHRONOUS "preferred" → RPO=0 in normal operation, degrades to
-#     async instead of blocking order intake if the standby disappears (the money-path
-#     invariants do not live in orders-db; losing intake availability costs more).
-#   - payments-db: single instance (team decision 09/06): not contended; no-double-charge
-#     is enforced by the idempotency table, not by replication; unavailability is
-#     contained by the Orders circuit breaker + fallback.
-#   - catalog-db: single instance; staleness-tolerant by definition.
-# NOTE: `postgresql.synchronous` requires CloudNativePG >= 1.25.
+# Replication posture = our PACELC statement made real: CNPG replicates ASYNCHRONOUSLY by default, which means a failover can lose the last committed transactions (RPO > 0). For inventory that would break "never oversell" exactly under chaos experiment #5 (a committed reservation vanishes, the seat counter rolls back, the seat is sold twice). Hence:
+#
+#   - inventory-db: SYNCHRONOUS replication, dataDurability=required → RPO=0 always. 3 instances (ANY 1 of 2 standbys) so losing ONE replica does not block writes; if the primary is partitioned from both standbys, writes BLOCK = consistency over availability (PACELC PC/EC). Resource-saving variant: 2 instances (1 pod less) is also defensible but blocks writes whenever the single standby is down
+#
+#   - orders-db: SYNCHRONOUS "preferred" → RPO=0 in normal operation, degrades to async instead of blocking order intake if the standby disappears (the money-path invariants do not live in orders-db; losing intake availability costs more)
+#
+#   - payments-db: single instance (team decision 09/06): not contended; no-double-charge is enforced by the idempotency table, not by replication; unavailability is contained by the Orders circuit breaker + fallback
+#
+#   - catalog-db: single instance; staleness-tolerant by definition
+#
+# NOTE: `postgresql.synchronous` requires CloudNativePG >= 1.25
+
+
 databases:
+
   catalog-db:
+    # single instance: a read store that tolerates staleness needs no HA
     instances: 1
+    # database name created by initdb (matches the app's DB_NAME)
     database: catalogdb
+    # role that owns the schema (matches the app's DB_USER)
     owner: catalog
+
   orders-db:
+    # 2 instances: primary + one standby for fast failover
     instances: 2
     database: ordersdb
     owner: orders
+    # RPO=0 while healthy, but never block order intake if the standby disappears
     synchronous:
       method: any
       number: 1
       dataDurability: preferred
+
   inventory-db:
+    # 3 instances: survive losing ONE replica without blocking writes (the invariant store)
     instances: 3
     database: inventorydb
     owner: inventory
+    # required = consistency over availability: block writes rather than risk RPO > 0
     synchronous:
       method: any
       number: 1
       dataDurability: required
+  
   payments-db:
+    # single instance: correctness is the idempotency table, not replication (team decision)
     instances: 1
     database: paymentsdb
     owner: payments
 
-# Default container resources for the services (no CPU limit: avoid throttling spikes;
-# memory limit bounds the JVM blast radius).
+# Default container resources for the services (no CPU limit: avoid throttling spikes; memory limit bounds the JVM blast radius)
 resources:
+  # guaranteed share the scheduler reserves
   requests:
     cpu: 100m
     memory: 256Mi
+  # hard ceiling (memory only -> a CPU limit would throttle latency-sensitive spikes)
   limits:
     memory: 512Mi
 
-# Resources for every PostgreSQL instance (applied to all Cluster CRs).
+# Resources for every PostgreSQL instance (applied to all Cluster CRs)
 databaseResources:
   requests:
     cpu: 100m

@@ -1,8 +1,7 @@
 {{- /*
-PodDisruptionBudgets for critical-path services: keep at least one replica available during
-voluntary disruptions (node drains, rolling node upgrades). Validated by the Node/AZ chaos
-experiment. Only emitted for services with replicaCount >= 2 to avoid blocking drains.
+PodDisruptionBudgets for critical-path services: keep at least 1 replica available during voluntary disruptions (node drains, rolling node upgrades). Validated by the Node/AZ chaos experiment. Only emitted for services with replicaCount >= 2 to avoid blocking drains
 */ -}}
+{{- /* a PDB only makes sense with >=2 replicas, otherwise it would block every drain */}}
 {{- range $name, $svc := .Values.services }}
 {{- if and $svc.criticalPath (ge (int $svc.replicaCount) 2) }}
 ---
@@ -13,7 +12,9 @@ metadata:
   labels:
     {{- include "eurotransit.labels" (dict "svc" $name "root" $) | nindent 4 }}
 spec:
+  # the cluster may never voluntarily evict the last pod: at least one must stay up
   minAvailable: 1
+  # the pods this budget protects (matched by the stable selector labels)
   selector:
     matchLabels:
       {{- include "eurotransit.selectorLabels" (dict "svc" $name) | nindent 6 }}

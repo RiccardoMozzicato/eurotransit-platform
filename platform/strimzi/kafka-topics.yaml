@@ -1,14 +1,19 @@
-# Event topics for the order pipeline (managed by the Strimzi Topic Operator).
-# Partitions enable parallel consumers; replication.factor=3 with min.insync.replicas=2
-# (set on the cluster) keeps events durable across a broker loss / network partition.
-# NOTE: plain manifests applied at platform bootstrap (NOT Helm-templated).
+# Event topics for the order pipeline (managed by the Strimzi Topic Operator)
+#
+# Partitions enable parallel consumers; replication.factor=3 with min.insync.replicas=2 (set on the cluster) keeps events durable across a broker loss / network partition
+#
+# NOTE: plain manifests applied at platform bootstrap (NOT Helm-templated)
+#
+# Every topic below uses the same shape: partitions=3 (parallelism -> up to 3 consumers per group work in parallel; same key = same partition = per-order ordering) and replicas=3 (one copy per broker, so a broker loss never loses events)
 ---
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
+  # the synchronous entry's event: Orders' outbox publishes it, Orders' saga consumes it
   name: order-placed
   namespace: kafka
   labels:
+    # binds this topic to the "eurotransit" Kafka cluster
     strimzi.io/cluster: eurotransit
 spec:
   partitions: 3

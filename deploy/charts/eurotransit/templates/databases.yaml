@@ -1,16 +1,15 @@
 {{- /*
-CloudNativePG Cluster CRs — one per data-owning service (database-per-service ownership).
-The CloudNativePG *operator* is installed once per cluster (platform component); these CRs
-declare the per-service databases. CNPG auto-creates a `<name>-app` Secret with
-host/port/dbname/username/password, consumed by the matching Deployment.
+CloudNativePG Cluster CRs -> one per data-owning service (database-per-service ownership)
 
-Replication posture (PACELC, see docs/design.md §4.12 and values.yaml): databases that
-protect a correctness invariant opt into SYNCHRONOUS replication via the optional
-`synchronous` block (requires CNPG >= 1.25). CNPG's default is asynchronous, which allows
-RPO > 0 on failover — unacceptable for the inventory invariant ("never oversell").
+The CloudNativePG operator is installed once per cluster (platform component); these CRs declare the per-service databases. CNPG auto-creates a "<name>-app" Secret with host/port/dbname/username/password, consumed by the matching Deployment.
+
+Replication posture (PACELC): databases that protect a correctness invariant opt into SYNCHRONOUS replication via the optional "synchronous" block (requires CNPG >= 1.25). CNPG's default is asynchronous, which allows RPO > 0 on failover -> unacceptable for the inventory invariant ("never oversell!")
 */ -}}
+
+{{- /* one Cluster per entry in .Values.databases ($name = cluster name, $db = its config) */}}
 {{- range $name, $db := .Values.databases }}
 ---
+# postgresql.cnpg.io/v1 = the CRD the CloudNativePG operator reconciles into a running DB
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -19,29 +18,36 @@ metadata:
     app.kubernetes.io/part-of: eurotransit
     app.kubernetes.io/name: {{ $name }}
   annotations:
-    # Keep the data if the Helm release is removed (matches Lab04 safety convention).
+    # Keep the data if the Helm release is removed
     helm.sh/resource-policy: keep
 spec:
+  # number of Postgres pods: 1 = single instance, >=2 = primary + hot standby replicas
   instances: {{ $db.instances }}
+  # the Postgres image the operator runs (pinned major version 16)
   imageName: ghcr.io/cloudnative-pg/postgresql:16
   {{- if $db.synchronous }}
+  # synchronous replication = a commit waits for a standby to confirm -> RPO=0 (no data loss on failover). Only the correctness-critical DBs opt in (see values.yaml)
   postgresql:
     synchronous:
+      # ANY <number> standbys must acknowledge before a write is considered committed
       method: {{ $db.synchronous.method | default "any" }}
       number: {{ $db.synchronous.number | default 1 }}
-      # required  → never fall back to async: block writes rather than risk RPO > 0 (CP)
-      # preferred → RPO=0 while standbys are healthy, degrade to async instead of blocking
+      # required -> never fall back to async: block writes rather than risk RPO > 0 (CP)
+      # preferred -> RPO=0 while standbys are healthy, degrade to async instead of blocking
       dataDurability: {{ $db.synchronous.dataDurability | default "required" }}
   {{- end }}
+  # CPU/memory per Postgres instance (see values.yaml "databaseResources")
   resources:
     {{- toYaml $.Values.databaseResources | nindent 4 }}
+  # persistent volume size requested for each instance
   storage:
     size: 1Gi
+  # on first start the operator creates this database owned by this role, and emits the "<cluster>-app" Secret with the connection details the app consumes
   bootstrap:
     initdb:
       database: {{ $db.database }}
       owner: {{ $db.owner }}
-  # Enable Prometheus metrics so the DB appears in USE/Golden-Signals dashboards (Pillar D).
+  # Enable Prometheus metrics so the DB appears in USE/Golden-Signals dashboards (Pillar D)
   monitoring:
     enablePodMonitor: true
 {{- end }}

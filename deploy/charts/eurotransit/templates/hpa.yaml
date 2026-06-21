@@ -1,14 +1,13 @@
 {{- /*
-HorizontalPodAutoscalers — only for services that opt in via `hpa.enabled` (catalog and
-orders: the public sync endpoints, where load is bursty). Inventory and Payments
-deliberately do NOT autoscale: their bottleneck is the database / downstream PSP, not
-service CPU (see values.yaml comments). The matching Deployment omits `replicas` when the
-HPA is enabled, so Argo CD and the HPA never fight over the count.
-Note for Phase 5: a canary split (orders-v1/v2) must re-point or duplicate the HPA.
+HorizontalPodAutoscalers -> only for services that opt in via "hpa.enabled" (catalog and orders: the public sync endpoints, where load is bursty). Inventory and Payments deliberately don't autoscale: their bottleneck is the database / downstream PSP, not service CPU (see values.yaml comments).
+
+The matching Deployment omits "replicas" when the HPA is enabled, so Argo CD and the HPA never fight over the count (Note for Phase 5: a canary split (orders-v1/v2) must re-point or duplicate the HPA)
 */ -}}
+{{- /* loop over every service; "dig" safely reads hpa.enabled (default false if absent) */}}
 {{- range $name, $svc := .Values.services }}
 {{- if dig "hpa" "enabled" false $svc }}
 ---
+# autoscaling/v2 = the current HPA API (supports the richer "metrics" list below)
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -16,12 +15,15 @@ metadata:
   labels:
     {{- include "eurotransit.labels" (dict "svc" $name "root" $) | nindent 4 }}
 spec:
+  # which workload to scale: the Deployment of the same name
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
     name: {{ $name }}
+  # scale-out floor / ceiling (the floor matches the documented replicaCount baseline)
   minReplicas: {{ $svc.hpa.minReplicas }}
   maxReplicas: {{ $svc.hpa.maxReplicas }}
+  # scale on average CPU utilization across the pods: above target -> add pods
   metrics:
     - type: Resource
       resource:

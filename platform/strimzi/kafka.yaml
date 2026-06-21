@@ -1,50 +1,58 @@
 # Strimzi-managed Kafka cluster for the EuroTransit async pipeline.
-# Skeleton — pin the Strimzi/Kafka version and tune replicas/storage in Phase 3.
+# Skeleton -> pin the Strimzi/Kafka version and tune replicas/storage in Phase 3.
 # KRaft mode (no ZooKeeper) via a KafkaNodePool.
 #
-# Sizing trade-off (deliberate): 3 dual-role nodes is the MINIMUM for real HA — the KRaft
-# controller quorum needs 3 voters to tolerate one loss, and RF=3/minISR=2 lets the money
-# path survive one broker down with zero event loss. A single-node Kafka would save ~2 pods
-# but makes the whole async pipeline a SPOF and weakens chaos experiment #4. We keep 3 nodes
-# and bound their footprint instead (512m heap + memory limits) — right-size, don't shrink HA.
+# Sizing trade-off (deliberate): 3 dual-role nodes is the MINIMUM for real HA -> the KRaft controller quorum needs 3 voters to tolerate 1 loss, and RF=3/minISR=2 lets the money path survive 1 broker down with 0 event loss. A single-node Kafka would save circa 2 pods but makes the whole async pipeline a SPOF (single-point-of-failure) and weakens chaos experiment #4
+#
+# We keep 3 nodes and bound their footprint instead (512m heap + memory limits) -> right-size, don't shrink HA!
 ---
+# A KafkaNodePool declares a set of Kafka nodes with the same roles/resources/storage
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaNodePool
 metadata:
   name: dual-role
   namespace: kafka
   labels:
+    # ties this pool to the Kafka cluster named "eurotransit" below
     strimzi.io/cluster: eurotransit
 spec:
+  # 3 nodes = the minimum KRaft quorum that tolerates losing 1
   replicas: 3
+  # each node is BOTH a KRaft controller (metadata quorum) and a broker (data)
   roles:
     - controller
     - broker
+  # bound the per-node footprint (right-size, don't shrink HA)
   resources:
     requests:
       cpu: 250m
       memory: 768Mi
     limits:
       memory: 1Gi
+  # JVM heap (kept below the memory limit so off-heap + page cache have room)
   jvmOptions:
     -Xms: 512m
     -Xmx: 512m
+  # durable per-node storage; deleteClaim=false keeps the data if the pool is removed
   storage:
     type: persistent-claim
     size: 5Gi
     deleteClaim: false
 ---
+# The Kafka cluster itself (brokers are provided by the node pool above)
 apiVersion: kafka.strimzi.io/v1beta2
 kind: Kafka
 metadata:
   name: eurotransit
   namespace: kafka
   annotations:
+    # opt into the node-pool model and KRaft (no ZooKeeper)
     strimzi.io/node-pools: enabled
     strimzi.io/kraft: enabled
 spec:
   kafka:
     version: 3.9.0
+    # internal-only plaintext listener on 9092 (reached as the kafkaBootstrap in values.yaml)
     listeners:
       - name: plain
         port: 9092
@@ -52,11 +60,15 @@ spec:
         tls: false
     config:
       # Durability for the money path: replicate across brokers, require ISR acks.
+      # default replication factor for new topics: 3 copies of every partition
       default.replication.factor: 3
+      # a write is acked only once >=2 in-sync replicas have it (pairs with producer acks=all)
       min.insync.replicas: 2
+      # internal Kafka topics also replicated x3 for the same durability guarantee
       offsets.topic.replication.factor: 3
       transaction.state.log.replication.factor: 3
       transaction.state.log.min.isr: 2
+  # operators that reconcile KafkaTopic / KafkaUser CRs into real topics/users
   entityOperator:
     topicOperator: {}
     userOperator: {}

@@ -1,21 +1,21 @@
 {{- /*
-North-south entrypoint (Traefik + cert-manager TLS), following the Lab03/Lab04 pattern.
-Only Catalog and Orders are public (client → gateway → Catalog/Orders). Inventory, Payments
-and Notifications are internal: reached by Orders (sync) or via Kafka (async), never directly
-from the internet.
+North-south entrypoint (Traefik + cert-manager TLS)
 
-Each service serves under its own path prefix (e.g. /api/orders, /api/catalog), so no
-strip-prefix middleware is needed. Phase 5 replaces the Orders route with a Traefik
-IngressRoute + TraefikService for weighted canary / blue-green delivery on the critical path.
+Only Catalog and Orders are public (client -> gateway -> Catalog/Orders). Inventory, Payments and Notifications are internal: reached by Orders (sync) or via Kafka (async), never directly from the internet!
+
+Each service serves under its own path prefix (e.g. /api/orders, /api/catalog), so no strip-prefix middleware is needed (Phase 5 replaces the Orders route with a Traefik IngressRoute + TraefikService for weighted canary / blue-green delivery on the critical path)
 */ -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: eurotransit
   annotations:
+    # cert-manager watches this annotation and provisions/renews the TLS cert automatically
     cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
+  # route through the Traefik ingress controller (installed once as a platform component)
   ingressClassName: traefik
+  # terminate HTTPS for our host; cert-manager stores the cert in this secret
   tls:
     - hosts:
         - {{ .Values.global.domain }}
@@ -24,6 +24,7 @@ spec:
     - host: {{ .Values.global.domain }}
       http:
         paths:
+          # /api/catalog/** -> the Catalog service (public browse API)
           - path: /api/catalog
             pathType: Prefix
             backend:
@@ -31,6 +32,7 @@ spec:
                 name: catalog
                 port:
                   number: {{ .Values.services.catalog.port }}
+          # /api/orders/** -> the Orders service (public money-path entry)
           - path: /api/orders
             pathType: Prefix
             backend:

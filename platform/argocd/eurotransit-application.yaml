@@ -1,18 +1,16 @@
-# Argo CD `Application` — the GitOps contract: "keep the cluster equal to THIS path of
-# THIS repo". Applied once at platform bootstrap; from then on Argo CD reconciles.
+# Argo CD "Application" -> the GitOps contract: "keep the cluster equal to THIS path of THIS repo". Applied once at platform bootstrap; from then on, Argo CD reconciles
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: eurotransit
-  # Application CRs live in Argo CD's own namespace, NOT in the app namespace.
+  # Application CRs live in Argo CD's own namespace, NOT in the app namespace
   namespace: argocd
-  # With this finalizer, deleting the Application also deletes the resources it created
-  # (cascade delete) instead of orphaning them in the cluster.
+  # With this finalizer, deleting the Application also deletes the resources it created (cascade delete) instead of orphaning them in the cluster
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  # WHAT to deploy: render this Helm chart from this repo/branch/path.
+  # WHAT to deploy: render this Helm chart from this repo/branch/path
   source:
     repoURL: https://github.com/polito-CPO-2026/capstone-configuration-g03.git
     targetRevision: main
@@ -20,19 +18,19 @@ spec:
     helm:
       valueFiles:
         - values.yaml
-  # WHERE to deploy: the local cluster (the one Argo CD runs in), namespace eurotransit.
+  # WHERE to deploy: the local cluster (the one Argo CD runs in), namespace eurotransit
   destination:
     server: https://kubernetes.default.svc
     namespace: eurotransit
   syncPolicy:
     # automated = reconcile without a human clicking "Sync":
-    #   prune    → delete cluster resources that were removed from Git
-    #   selfHeal → revert manual (out-of-band) changes made with kubectl
-    # Together these make Git the single source of truth, demoed in Lab04 via drift.
+    #   prune    -> delete cluster resources that were removed from Git
+    #   selfHeal -> revert manual (out-of-band) changes made with kubectl
+    # Together these make Git the single source of truth
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      # Server-side apply plays better with large CRDs (CloudNativePG Cluster, etc.)
+      # Server-side apply plays better with large CRDs (CloudNativePG Cluster, etc...)
       - ServerSideApply=true

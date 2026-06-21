@@ -1,13 +1,14 @@
-apiVersion: v2
-name: eurotransit
-description: EuroTransit Marketplace — application desired state (five services + their data + routing)
-type: application
-version: 0.1.0
-appVersion: "0.1.0"
+# Helm chart metadata for the EuroTransit application (the unit Argo CD renders + applies)
 
-# NOTE (deliberate deviation from Lab04): we do NOT vendor the CloudNativePG `cluster`
-# subchart here. The CloudNativePG *operator* is installed once per cluster as a platform
-# component; each service's database is declared directly as a `Cluster` CR in
-# templates/databases.yaml. Reason: we need several independent databases (one per
-# data-owning service), and per-service Cluster CRs are clearer and easier to reason about
-# than three aliased subchart instances. Strimzi/Kafka is likewise platform-level.
+apiVersion: v2          # Helm chart API version (v2 = Helm 3+ charts)
+name: eurotransit       # Chart name (also the default release name / prefix)
+description: EuroTransit Marketplace - application desired state (5 services + their data + routing)  # human description shown by "helm show chart"
+type: application       # "application" (deployable) vs "library" (shared helpers only): this ships workloads
+version: 0.1.0          # Chart version: bump when the templates change (independent of the app version)
+appVersion: "0.1.0"     # Version of the application being deployed (informational; quoted as recommended)
+
+# NOTE (deliberate deviation from Lab04): we do NOT vendor the CloudNativePG "cluster" subchart here. The CloudNativePG operator is installed once per cluster as a platform component; each service's database is declared directly as a "Cluster" CR in templates/databases.yaml
+
+# Reason: we need several independent databases (one per data-owning service) and per-service Cluster CRs are clearer and easier to reason about than three aliased subchart instances. Strimzi/Kafka is likewise platform-level
+
+# Consequence: there is NO "dependencies:"" block, so NO Chart.lock and NO charts/*.tgz are generated here

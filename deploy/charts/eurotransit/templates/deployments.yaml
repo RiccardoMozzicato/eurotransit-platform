@@ -1,9 +1,9 @@
 {{- /*
-One Deployment + Service per entry in .Values.services.
-Probes follow the capstone rule: readiness reflects "can I serve now" (and, where a DB is
-owned, includes the db health group via the app config); liveness only checks the process
-itself and must NOT fail on transient downstream issues.
+1 Deployment + Service per entry in .Values.services
+Probes follow the capstone rule: readiness reflects "can I serve now" (and, where a DB is owned, includes the db health group via the app config); liveness only checks the process itself and must NOT fail on transient downstream issues
 */ -}}
+
+{{- /* one iteration per service: $name is the key, $svc is its config object */}}
 {{- range $name, $svc := .Values.services }}
 ---
 apiVersion: apps/v1
@@ -13,11 +13,11 @@ metadata:
   labels:
     {{- include "eurotransit.labels" (dict "svc" $name "root" $) | nindent 4 }}
 spec:
-  {{- /* When the HPA owns scaling we omit `replicas`: a pinned value would make Argo CD
-         and the HPA fight over the count on every reconcile. */}}
+  {{- /* When the HPA owns scaling we omit "replicas": a pinned value would make Argo CD and the HPA fight over the count on every reconcile. */}}
   {{- if not (dig "hpa" "enabled" false $svc) }}
   replicas: {{ $svc.replicaCount }}
   {{- end }}
+  # the Deployment manages the pods carrying these stable labels
   selector:
     matchLabels:
       {{- include "eurotransit.selectorLabels" (dict "svc" $name) | nindent 6 }}
@@ -26,12 +26,10 @@ spec:
       labels:
         {{- include "eurotransit.labels" (dict "svc" $name "root" $) | nindent 8 }}
     spec:
-      # SIGTERM drain window (Pillar A): readiness flips to refusing traffic, in-flight
-      # work finishes or is cancelled cooperatively within this budget.
+      # SIGTERM drain window (Pillar A): readiness flips to refusing traffic, in-flight work finishes or is cancelled cooperatively within this budget
       terminationGracePeriodSeconds: 30
       {{- if $svc.criticalPath }}
-      # Spread critical-path pods across nodes so a single node loss cannot take the
-      # service fully down (validated by the Node/AZ-disruption chaos experiment).
+      # Spread critical-path pods across nodes so a single node loss can't take the service fully down (validated by the Node/AZ-disruption chaos experiment)
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -42,22 +40,25 @@ spec:
       {{- end }}
       containers:
         - name: {{ $name }}
+          # immutable image tag (the commit SHA) is bumped here by CI on every build
           image: "{{ $svc.image.repository }}:{{ $svc.image.tag }}"
           imagePullPolicy: {{ $svc.image.pullPolicy }}
-          # Small pre-stop pause: lets endpoint controllers remove the Pod from the
-          # Service before SIGTERM arrives, so no new request races into a dying Pod.
+          # Small pre-stop pause: lets endpoint controllers remove the Pod from the Service before SIGTERM arrives, so no new request races into a dying Pod
           lifecycle:
             preStop:
               exec:
                 command: ["sh", "-c", "sleep 5"]
+          # the single port the Spring Boot app listens on (named "http" so probes can reuse it)
           ports:
             - name: http
               containerPort: {{ $svc.port }}
               protocol: TCP
           env:
+            # where to ship traces (OTLP); overrides the local default baked in the image
             - name: MANAGEMENT_OTLP_TRACING_ENDPOINT
               value: "http://otel-collector.observability.svc:4318/v1/traces"
             {{- if $svc.usesKafka }}
+            # Kafka bootstrap address (only injected for services that produce/consume events)
             - name: KAFKA_BOOTSTRAP
               value: {{ $.Values.global.kafkaBootstrap | quote }}
             {{- end }}
@@ -67,8 +68,10 @@ spec:
               value: {{ $envValue | quote }}
             {{- end }}
             {{- if $svc.db }}
+            # switch the app onto PostgreSQL (the postgres Spring profile)
             - name: SPRING_PROFILES_ACTIVE
               value: "postgres"
+            {{- /* DB_* come from the `<db>-app` Secret that CloudNativePG generates itself -> credentials are never written into Git or this chart */}}
             - name: DB_HOST
               valueFrom:
                 secretKeyRef:
@@ -95,18 +98,22 @@ spec:
                   name: {{ $svc.db }}-app
                   key: password
             {{- end }}
+          # readiness = "should I receive traffic NOW?" -> failing here removes the pod from the Service endpoints (but does NOT restart it)
+          # periodSeconds = how often to check; failureThreshold = consecutive failures before flipping NotReady
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
               port: http
             periodSeconds: 10
             failureThreshold: 3
+          # liveness = "is the process wedged?" -> failing here RESTARTS the pod, so it checks only the app itself (never a downstream), to avoid restart storms on a blip
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
               port: http
             periodSeconds: 15
             failureThreshold: 3
+          # startup = slow-boot grace: up to 24*5s = 2 min for the JVM to come up before liveness starts counting (so a slow start is not mistaken for a hang)
           startupProbe:
             httpGet:
               path: /actuator/health/liveness
@@ -114,9 +121,11 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 5
             failureThreshold: 24
+          # CPU/memory requests+limits shared by all services (see values.yaml "resources")
           resources:
             {{- toYaml $.Values.resources | nindent 12 }}
 ---
+# stable in-cluster address for the service: other pods reach it as http://<name>:<port>
 apiVersion: v1
 kind: Service
 metadata:
@@ -124,6 +133,7 @@ metadata:
   labels:
     {{- include "eurotransit.labels" (dict "svc" $name "root" $) | nindent 4 }}
 spec:
+  # ClusterIP = internal only; the public edge is the Ingress (Catalog/Orders only)
   type: ClusterIP
   selector:
     {{- include "eurotransit.selectorLabels" (dict "svc" $name) | nindent 4 }}
