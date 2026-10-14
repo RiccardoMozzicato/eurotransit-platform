@@ -7,7 +7,7 @@
 | [**eurotransit-application**](https://github.com/RiccardoMozzicato/eurotransit-application) | service code, tests, CI pipeline, frontend |
 | [**eurotransit-platform**](https://github.com/RiccardoMozzicato/eurotransit-platform) | **this repo** — GitOps desired state: Helm chart, platform operators, SLOs, chaos experiments, docs |
 
-Capstone team project (group g03) by Dario Berti · Federico Ferrari · Mattia Domizio · Riccardo Mozzicato · Emanuele Romano.
+Capstone team project (group g03) for the **Cloud Programming and Operations** course at Politecnico di Torino, by Dario Berti · Federico Ferrari · Mattia Domizio · Riccardo Mozzicato · Emanuele Romano.
 
 **Stack:** Kubernetes (Azure AKS) · Helm · Argo CD · Argo Rollouts · Strimzi Kafka · Debezium ·
 CloudNativePG · Traefik · cert-manager · Sealed Secrets · Prometheus · Grafana · Tempo · OpenTelemetry · Chaos Mesh · k6
