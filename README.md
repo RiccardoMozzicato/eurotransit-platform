@@ -1,4 +1,32 @@
-# EuroTransit Marketplace — Configuration repository (g03)
+# EuroTransit Marketplace — Platform & GitOps
+
+**Kubernetes platform, GitOps delivery and SRE tooling for the EuroTransit marketplace, deployed on Azure AKS.**
+
+| Repository | Role |
+|---|---|
+| [**eurotransit-application**](https://github.com/RiccardoMozzicato/eurotransit-application) | service code, tests, CI pipeline, frontend |
+| [**eurotransit-platform**](https://github.com/RiccardoMozzicato/eurotransit-platform) | **this repo** — GitOps desired state: Helm chart, platform operators, SLOs, chaos experiments, docs |
+
+Capstone team project (group g03) by Dario Berti · Federico Ferrari · Mattia Domizio · Riccardo Mozzicato · Emanuele Romano.
+
+**Stack:** Kubernetes (Azure AKS) · Helm · Argo CD · Argo Rollouts · Strimzi Kafka · Debezium ·
+CloudNativePG · Traefik · cert-manager · Sealed Secrets · Prometheus · Grafana · Tempo · OpenTelemetry · Chaos Mesh · k6
+
+### Highlights
+
+- **Event-driven microservices** — six Kotlin/Spring Boot services; the booking money path is an orchestrated
+  **Kafka command/reply saga** with a **transactional outbox drained by Debezium CDC**.
+- **Consistency under contention** — never-oversell seat inventory via atomic conditional updates, idempotent
+  handlers, and synchronous PostgreSQL replication (RPO = 0) on the critical database.
+- **GitOps on Azure AKS** — CI pushes immutable SHA-tagged images and bumps tags in Git; **Argo CD** reconciles
+  the cluster, and CI never holds cluster credentials.
+- **Progressive delivery** — SLO-gated **canary** with automatic abort and **blue/green** via Argo Rollouts.
+- **Observability & SRE** — SLOs with multi-window burn-rate alerts, Prometheus/Grafana dashboards, distributed
+  tracing across the Kafka/CDC hop.
+- **Chaos engineering** — eight Chaos Mesh experiments (pod/node kill, DB failover, Kafka partition, poison
+  messages), each with hypothesis and verdict, executed against the live AKS cluster.
+
+---
 
 The **declarative half** of a two-repository GitOps model. Where the application repository
 (`eurotransit-application`) answers *"how is the code built?"*, this repository answers *"what must run in
@@ -217,8 +245,7 @@ exercised together with the progressive-delivery demo.
 - [docs/chaos/](docs/chaos/) — the eight chaos-experiment reports
 - [docs/demo-runbook.md](docs/demo-runbook.md) — start-to-shutdown demo runbook + chaos run commands
 - [docs/postmortem.md](docs/postmortem.md) — blameless postmortem
-- [docs/traccia/FASI_PROGETTO.md](docs/traccia/FASI_PROGETTO.md) — phase-by-phase progress and how the team split the work
-- [docs/NOTES.md](docs/NOTES.md) — student-subscription tradeoffs: what we did under the 3×B2s_v2 / 12-disk ceiling vs. what a real/prod environment would change
+- [docs/roles.md](docs/roles.md) — team members and how the work was split
 
 > This README is the config-side overview; the detailed decision log + per-pillar rationale live in `docs/design.md`,
 > and the application-side design and booking money path live in the app repo's README.

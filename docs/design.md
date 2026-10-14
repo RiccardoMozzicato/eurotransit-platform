@@ -2,8 +2,7 @@
 
 > Team-owned. Documento **unico** e canonico di design ad alto livello del sistema e del repo di
 > configurazione — ogni scelta è difendibile all'orale. Si aggiorna **direttamente** quando cambia
-> l'architettura (niente più file sparsi per fase). Companion: `docs/traccia/FASI_PROGETTO.md` = avanzamento
-> (cosa c'è / cosa manca, per fase); `docs/agent-log.md` = errori degli agenti (gradato);
+> l'architettura (niente più file sparsi per fase). Companion: `docs/agent-log.md` = errori degli agenti (gradato);
 > `docs/agent-threat-model.md`, `docs/postmortem.md`, `docs/chaos/*` = artefatti dei Pilastri; i
 > `platform/*/README.md` = runbook operativi per componente. Il design del **codice** sta nel repo `application`.
 
