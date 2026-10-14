@@ -57,7 +57,7 @@
 
 ## 4. Frontend (storefront SPA — merged on `main`)
 
-`capstone-application-g03/frontend` — the EuroTransit storefront (Vite + React + TypeScript, Tailwind, Redux
+`eurotransit-application/frontend` — the EuroTransit storefront (Vite + React + TypeScript, Tailwind, Redux
 Toolkit + RTK Query, Axios, `keycloak-js`, SSE order-status stream). Pinned in `frontend/package.json`:
 
 | Component | Version | Component | Version |

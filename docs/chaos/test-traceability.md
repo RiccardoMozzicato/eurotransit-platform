@@ -1,6 +1,6 @@
 # Test → chaos-experiment traceability
 
-Two levels of the **same** proof. The in-process **functional tests** (`capstone-application-g03/services/*/src/test`)
+Two levels of the **same** proof. The in-process **functional tests** (`eurotransit-application/services/*/src/test`)
 are **level 1** — fast, deterministic, run on every CI build. The **Chaos Mesh experiments** (manifests under
 `platform/chaos-mesh/`, reports `NN-name.md` in this directory) are **level 2** — the same hypothesis reproduced on the
 real cluster under exactly one injected infrastructure failure. *"Resilience is a property you prove, not assume."*

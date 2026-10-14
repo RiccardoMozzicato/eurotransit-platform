@@ -1,17 +1,17 @@
 # EuroTransit Marketplace — Configuration repository (g03)
 
 The **declarative half** of a two-repository GitOps model. Where the application repository
-(`capstone-application-g03`) answers *"how is the code built?"*, this repository answers *"what must run in
+(`eurotransit-application`) answers *"how is the code built?"*, this repository answers *"what must run in
 the cluster, and with which guarantees?"*. It contains no compilable code — only the **desired state** of the
 system. **Argo CD** reads this repo and makes the cluster identical to what is written here; nobody changes the
 cluster by hand.
 
 ```
- dev → push to capstone-application-g03 (CODE)
+ dev → push to eurotransit-application (CODE)
    │   CI: test → build immutable :sha images → push to ACR
    │        └─ bump services.<svc>.image.tag in THIS repo's values.yaml (via a scoped PAT)
    ▼
- capstone-configuration-g03 (DESIRED STATE, here)   ← the single source of truth in Git
+ eurotransit-platform (DESIRED STATE, here)   ← the single source of truth in Git
    │   Argo CD watches deploy/charts/eurotransit
    ▼
  Kubernetes cluster (continuously reconciled: prune + selfHeal)

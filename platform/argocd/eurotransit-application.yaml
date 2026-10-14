@@ -17,7 +17,7 @@ spec:
   project: default
   # WHAT to deploy: render this Helm chart from this repo/branch/path
   source:
-    repoURL: https://github.com/DarioBerti/capstone-configuration-g03.git
+    repoURL: https://github.com/RiccardoMozzicato/eurotransit-platform.git
     targetRevision: main
     path: deploy/charts/eurotransit
     helm:

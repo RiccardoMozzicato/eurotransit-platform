@@ -15,7 +15,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/DarioBerti/capstone-configuration-g03.git
+    repoURL: https://github.com/RiccardoMozzicato/eurotransit-platform.git
     targetRevision: main
     path: platform/keycloak/operator
   destination:

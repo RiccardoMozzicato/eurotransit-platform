@@ -15,7 +15,7 @@ reg_name       := "kind-registry"
 reg_port       := "5001"
 local_registry := "localhost:5001"
 # app repo (sibling checkout) that holds the service Dockerfiles
-app_repo       := "../capstone-application-g03"
+app_repo       := "../eurotransit-application"
 image_prefix   := "eurotransit"
 img_tag        := "dev"
 services       := "catalog orders inventory payments notifications users"
